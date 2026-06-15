@@ -35,6 +35,21 @@ OPTIONS
 
        -x     remove the current directory from the datafile
 
+       --export [file]
+              export the database to a file (or stdout if no file given).
+              Only entries whose directories still exist are exported.
+
+       --import [--keep-dead] <file>
+              import  and merge entries from a file into the current data-
+              base.  For duplicate directories, the higher rank and  more
+              recent  timestamp  are  kept.  Directories that no longer
+              exist on disk are skipped unless --keep-dead is given.
+
+       --import-dry-run [--keep-dead] <file>
+              preview what --import would do without modifying the  data-
+              base.   Shows  which  entries  would be added, updated, or
+              skipped.
+
 EXAMPLES
        z foo         cd to most frecent dir matching foo
 
@@ -45,6 +60,15 @@ EXAMPLES
        z -t foo      cd to most recently accessed dir matching foo
 
        z -l foo      list all dirs matching foo (by frecency)
+
+       z --export ~/z_backup.z
+                     export the database to ~/z_backup.z
+
+       z --import ~/z_backup.z
+                     merge entries from ~/z_backup.z into the database
+
+       z --import-dry-run ~/z_backup.z
+                     preview what an import would change
 
 NOTES
    Installation:
@@ -103,6 +127,39 @@ NOTES
        Internally, z decides you've requested a completion if the  last  argu-
        ment  passed  is  an  absolute  path to an existing directory. This may
        cause unexpected behavior if the last argument to z begins with /.
+
+   Data Migration:
+       z supports exporting and importing its database for migrating between
+       machines, backing up your history, or synchronizing across dotfiles.
+
+       To back up your z database:
+
+              z --export > ~/z_backup.z
+
+       Or export directly to a file:
+
+              z --export ~/z_backup.z
+
+       To restore or merge on a new machine:
+
+              z --import ~/z_backup.z
+
+       The import performs a smart merge: for directories that exist in both
+       the import file and the current database, the higher rank and more
+       recent access time are preserved.  New entries are added.  Entries
+       whose directories no longer exist on disk are skipped by default.
+
+       Use --keep-dead to preserve entries for directories that don't exist
+       yet (useful when importing before recreating your directory structure):
+
+              z --import --keep-dead ~/z_backup.z
+
+       Always preview an import before committing:
+
+              z --import-dry-run ~/z_backup.z
+
+       This shows which entries would be added, updated, left unchanged, or
+       skipped, without modifying the database.
 
 ENVIRONMENT
        A function _z() is defined.

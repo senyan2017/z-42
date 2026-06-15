@@ -4,7 +4,13 @@ NAME
 z \- jump around
 .SH
 SYNOPSIS
-z [\-chlrtx] [regex1 regex2 ... regexn]
+z [\-cehlrtx] [regex1 regex2 ... regexn]
+.P
+z \-\-export [file]
+.P
+z \-\-import [\-\-keep\-dead] <file>
+.P
+z \-\-import\-dry\-run [\-\-keep\-dead] <file>
 .SH
 AVAILABILITY
 bash, zsh
@@ -39,6 +45,20 @@ match by recent access only
 .TP
 \fB\-x\fR
 remove the current directory from the datafile
+.TP
+\fB\-\-export\fR [\fIfile\fR]
+export the database to \fIfile\fR (or stdout if no file given). Only entries
+whose directories still exist on disk are exported.
+.TP
+\fB\-\-import\fR [\fB\-\-keep\-dead\fR] <\fIfile\fR>
+import and merge entries from \fIfile\fR into the current database. For
+duplicate directories, the higher rank and more recent timestamp are kept.
+Directories that no longer exist on disk are skipped unless \fB\-\-keep\-dead\fR
+is given.
+.TP
+\fB\-\-import\-dry\-run\fR [\fB\-\-keep\-dead\fR] <\fIfile\fR>
+preview what \fB\-\-import\fR would do without modifying the database. Shows
+which entries would be added, updated, or skipped.
 .SH EXAMPLES
 .TP 14
 \fBz foo\fR
@@ -55,6 +75,15 @@ cd to most recently accessed dir matching foo
 .TP 14
 \fBz -l foo\fR
 list all dirs matching foo (by frecency)
+.TP 14
+\fBz --export ~/z_backup.z\fR
+export the database to ~/z_backup.z
+.TP 14
+\fBz --import ~/z_backup.z\fR
+merge entries from ~/z_backup.z into the database
+.TP 14
+\fBz --import-dry-run ~/z_backup.z\fR
+preview what an import would change
 .SH
 NOTES
 .SS
@@ -132,6 +161,49 @@ shell.
 Internally, \fBz\fR decides you've requested a completion if the last argument
 passed is an absolute path to an existing directory. This may cause unexpected
 behavior if the last argument to \fBz\fR begins with \fB/\fR.
+.SS
+Data Migration:
+\fBz\fR supports exporting and importing its database for migrating between
+machines, backing up your history, or synchronizing across dotfiles.
+.P
+To back up your z database:
+.RS
+.P
+\fBz \-\-export > ~/z_backup.z\fR
+.RE
+.P
+Or export directly to a file:
+.RS
+.P
+\fBz \-\-export ~/z_backup.z\fR
+.RE
+.P
+To restore or merge on a new machine:
+.RS
+.P
+\fBz \-\-import ~/z_backup.z\fR
+.RE
+.P
+The import performs a smart merge: for directories that exist in both the
+import file and the current database, the higher rank and more recent access
+time are preserved. New entries are added. Entries whose directories no longer
+exist on disk are skipped by default.
+.P
+Use \fB\-\-keep\-dead\fR to preserve entries for directories that don't exist yet
+(useful when importing before recreating your directory structure):
+.RS
+.P
+\fBz \-\-import \-\-keep\-dead ~/z_backup.z\fR
+.RE
+.P
+Always preview an import before committing:
+.RS
+.P
+\fBz \-\-import\-dry\-run ~/z_backup.z\fR
+.RE
+.P
+This shows which entries would be added, updated, left unchanged, or skipped,
+without modifying the database.
 .SH
 ENVIRONMENT
 A function \fB_z()\fR is defined.

@@ -26,6 +26,9 @@
 #     * z -c foo  # restrict matches to subdirs of $PWD
 #     * z -x      # remove the current directory from the datafile
 #     * z -h      # show a brief help message
+#     * z --export [file]                # export database (to file or stdout)
+#     * z --import [--keep-dead] <file>  # import and merge from file
+#     * z --import-dry-run [--keep-dead] <file>  # preview import without changes
 
 [ -d "${_Z_DATA:-$HOME/.z}" ] && {
     echo "ERROR: z.sh's datafile (${_Z_DATA:-$HOME/.z}) is a directory."
@@ -116,6 +119,157 @@ _z() {
             }
         ' 2>/dev/null
 
+    # export database
+    elif [ "$1" = "--export" ]; then
+        shift
+        if [ -f "$datafile" ]; then
+            if [ -n "$1" ]; then
+                _z_dirs >| "$1" 2>/dev/null
+                [ $? -eq 0 ] && echo "Exported $(\awk 'END{print NR}' "$1") entries to $1" >&2
+            else
+                _z_dirs
+            fi
+        else
+            echo "No datafile found at $datafile" >&2
+            return 1
+        fi
+
+    # import and merge database
+    elif [ "$1" = "--import" ]; then
+        shift
+        local keep_dead=""
+        [ "$1" = "--keep-dead" ] && { keep_dead=1; shift; }
+        local import_file="$1"
+        if [ -z "$import_file" ]; then
+            echo "Usage: ${_Z_CMD:-z} --import [--keep-dead] <file>" >&2
+            return 1
+        fi
+        if [ ! -f "$import_file" ]; then
+            echo "Import file not found: $import_file" >&2
+            return 1
+        fi
+        # ensure datafile exists so awk processes both files correctly (mawk compat)
+        [ -f "$datafile" ] || touch "$datafile"
+        local tempfile="$datafile.$RANDOM"
+        local summary_file="$datafile.summary.$$"
+        \awk -v keep_dead="$keep_dead" -v summary_file="$summary_file" '
+            BEGIN { FS="|"; OFS="|" }
+            # Pass 1 (NR==FNR): read import file
+            NR==FNR {
+                if( NF < 3 ) { bad++; next }
+                if( $2+0 != $2 || $3+0 != $3 ) { bad++; next }
+                path = $1; rank = $2+0; ts = $3+0
+                if( rank < 1 ) { skipped++; next }
+                i_rank[path] = rank; i_time[path] = ts; i_paths[path] = 1
+                next
+            }
+            # Pass 2: read existing datafile
+            FNR!=NR {
+                if( NF < 3 ) next
+                path = $1
+                if( path in i_paths ) {
+                    if( i_rank[path] > $2+0 ) { rank = i_rank[path] } else { rank = $2+0 }
+                    if( i_time[path] > $3+0 ) { ts = i_time[path] } else { ts = $3+0 }
+                    delete i_paths[path]
+                } else {
+                    rank = $2+0; ts = $3+0
+                }
+                if( keep_dead || system("test -d \"" path "\"") == 0 ) {
+                    e_rank[path] = rank
+                    e_time[path] = ts
+                } else {
+                    dead++
+                }
+            }
+            END {
+                for( p in i_paths ) {
+                    if( keep_dead || system("test -d \"" p "\"") == 0 ) {
+                        e_rank[p] = i_rank[p]; e_time[p] = i_time[p]; added++
+                    } else {
+                        dead++; skipped++
+                    }
+                }
+                for( p in e_rank ) print p, e_rank[p], e_time[p]
+                printf "%d added, %d dead entries skipped\n", added+0, dead+0 > summary_file
+            }
+        ' "$import_file" "$datafile" >| "$tempfile"
+        if [ $? -ne 0 ]; then
+            \env rm -f "$tempfile" "$summary_file"
+            echo "Import failed" >&2
+            return 1
+        fi
+        local imported_count=$(\awk 'END{print NR}' "$tempfile")
+        [ "$_Z_OWNER" ] && \chown "$_Z_OWNER":"$(\id -ng "$_Z_OWNER")" "$tempfile"
+        \env mv -f "$tempfile" "$datafile" || { \env rm -f "$tempfile" "$summary_file"; return 1; }
+        local dead_info=""
+        [ -f "$summary_file" ] && { dead_info=$(\cat "$summary_file"); \env rm -f "$summary_file"; }
+        echo "Import complete: $imported_count entries in database" >&2
+        [ -n "$dead_info" ] && echo "$dead_info" >&2
+
+    # import dry-run: preview merge without modifying datafile
+    elif [ "$1" = "--import-dry-run" ]; then
+        shift
+        local keep_dead=""
+        [ "$1" = "--keep-dead" ] && { keep_dead=1; shift; }
+        local import_file="$1"
+        if [ -z "$import_file" ]; then
+            echo "Usage: ${_Z_CMD:-z} --import-dry-run [--keep-dead] <file>" >&2
+            return 1
+        fi
+        if [ ! -f "$import_file" ]; then
+            echo "Import file not found: $import_file" >&2
+            return 1
+        fi
+        # use empty temp file if datafile doesn't exist (mawk compat)
+        local existing_datafile="$datafile"
+        if [ ! -f "$existing_datafile" ]; then
+            existing_datafile="$datafile.dryrun.$$"
+            touch "$existing_datafile"
+        fi
+        \awk -v keep_dead="$keep_dead" '
+            BEGIN { FS="|"; OFS="|" }
+            NR==FNR {
+                if( NF < 3 ) { bad++; next }
+                if( $2+0 != $2 || $3+0 != $3 ) { bad++; next }
+                path = $1; rank = $2+0; ts = $3+0
+                if( rank < 1 ) { skipped++; next }
+                i_rank[path] = rank; i_time[path] = ts; i_paths[path] = 1
+                next
+            }
+            FNR!=NR {
+                if( NF < 3 ) { bad++; next }
+                path = $1; e_rank[path] = $2+0; e_time[path] = $3+0
+                if( path in i_paths ) {
+                    if( i_rank[path] > e_rank[path] ) { nr = i_rank[path] } else { nr = e_rank[path] }
+                    if( i_time[path] > e_time[path] ) { nt = i_time[path] } else { nt = e_time[path] }
+                    if( nr != e_rank[path] || nt != e_time[path] ) {
+                        printf "  UPDATE %s (rank: %s -> %s, time: %s -> %s)\n", path, e_rank[path], nr, e_time[path], nt
+                        updated++
+                    } else { unchanged++ }
+                    delete i_paths[path]
+                } else { unchanged++ }
+            }
+            END {
+                added=0; dead=0
+                for( p in i_paths ) {
+                    if( keep_dead || system("test -d \"" p "\"") == 0 ) {
+                        printf "  NEW    %s (rank: %s, time: %s)\n", p, i_rank[p], i_time[p]
+                        added++
+                    } else {
+                        printf "  SKIP   %s (directory does not exist)\n", p
+                        dead++
+                    }
+                }
+                printf "\nSummary: %d new, %d updated, %d unchanged", added, updated+0, unchanged+0
+                if( bad+0 > 0 ) printf ", %d malformed lines skipped", bad
+                if( skipped+0 > 0 ) printf ", %d low-rank entries skipped", skipped
+                if( dead > 0 ) printf ", %d dead directories skipped", dead
+                printf "\n"
+            }
+        ' "$import_file" "$existing_datafile" 2>/dev/null
+        # clean up temp file if we created one
+        [ "$existing_datafile" != "$datafile" ] && \env rm -f "$existing_datafile"
+
     else
         # list/go
         local echo fnd last list opt typ
@@ -124,7 +278,10 @@ _z() {
             -*) opt=${1:1}; while [ "$opt" ]; do case ${opt:0:1} in
                     c) fnd="^$PWD $fnd";;
                     e) echo=1;;
-                    h) echo "${_Z_CMD:-z} [-cehlrtx] args" >&2; return;;
+                    h) echo "Usage: ${_Z_CMD:-z} [-cehlrtx] [args]" >&2
+                       echo "       ${_Z_CMD:-z} --export [file]        export database to file (stdout if no file)" >&2
+                       echo "       ${_Z_CMD:-z} --import [--keep-dead] <file>  import and merge database" >&2
+                       echo "       ${_Z_CMD:-z} --import-dry-run [--keep-dead] <file>  preview import without changes" >&2;;
                     l) list=1;;
                     r) typ="rank";;
                     t) typ="recent";;
