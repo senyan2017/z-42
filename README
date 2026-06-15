@@ -59,14 +59,14 @@ NOTES
        Optionally:
               Set $_Z_CMD to change the command name (default z).
               Set $_Z_DATA to change the datafile (default $HOME/.z).
-              Set  $_Z_MAX_SCORE  lower  to  age  entries  out faster (default
+              Set  $_Z_MAX_SCORE  lower  to age entries out faster (default
               9000).
               Set $_Z_NO_RESOLVE_SYMLINKS to prevent symlink resolution.
               Set $_Z_NO_PROMPT_COMMAND to handle PROMPT_COMMAND/precmd  your-
               self.
               Set $_Z_EXCLUDE_DIRS to an array of directory trees to  exclude.
               Set $_Z_OWNER to allow usage when in 'sudo -s' mode.
-              (These  settings  should  go  in  .bashrc/.zshrc before the line
+              (These  settings  should  go  in  .bashrc/.zshrc  before the line
               added above.)
               Install the provided man page z.1  somewhere  in  your  MANPATH,
               like /usr/local/man/man1.
@@ -83,10 +83,14 @@ NOTES
        far as I know, Mozilla came up with the term.
 
        To z, a directory that has low ranking but has been  accessed  recently
-       will  quickly  have  higher rank than a directory accessed frequently a
+       will  quickly have higher rank than a directory accessed frequently  a
        long time ago.
 
-       Frecency is determined at runtime.
+       Frecency is determined at runtime using the formula:
+
+              frecency = int(10000 * rank * (3.75 / ((0.0001 * dx + 1) + 0.25)))
+
+       where dx = now - last_access_time.
 
    Common:
        When multiple directories match all queries, and they all have a common
@@ -94,18 +98,48 @@ NOTES
        priority.  This has been in effect, if  undocumented,  for  quite  some
        time, but should probably be configurable or reconsidered.
 
+       The common prefix is ignored when an explicit sort type is given (-r or
+       -t); in that case the highest-scored entry wins directly.
+
+   Matching rules:
+       z applies the following matching rules in order:
+
+       1. Each query argument is joined with ".*" so "foo bar" matches paths
+          containing "foo" then "bar" in order (regex).
+       2. Case-sensitive match is tried first.
+       3. If no case-sensitive match exists, falls back to case-insensitive.
+       4. Scoring depends on -r (rank), -t (recent), or default (frecency).
+       5. When listing (-l), all matches are printed sorted by score.
+       6. When navigating (no -l), if all matches share a common prefix, the
+          shortest matching path is chosen instead of the highest-scored one.
+
    Tab Completion:
        z  supports tab completion. After any number of arguments, press TAB to
        complete on directories that match each argument. Due to limitations of
-       the  completion  implementations,  only  the last argument will be com-
-       pleted in the shell.
+       the  completion  implementations,  only  the  last  argument  will  be
+       completed in the shell.
 
        Internally, z decides you've requested a completion if the  last  argu-
        ment  passed  is  an  absolute  path to an existing directory. This may
        cause unexpected behavior if the last argument to z begins with /.
 
+   Internal functions:
+       z.sh defines the following internal functions. These are implementation
+       details but are documented to aid anyone modifying the code:
+
+       _z_datafile()        Resolve the datafile path, following symlinks.
+       _z_datafile_accessible()  Check ownership of the datafile.
+       _z_dirs()            Read the datafile, filtering stale entries.
+       _z_add()             Add or update a directory entry with aging.
+       _z_remove()          Remove the current directory from the datafile.
+       _z_match()           Core matching/scoring engine (awk-based).
+       _z_complete()        Tab completion matching.
+       _z_parse_args()      Parse command-line flags into structured vars.
+       _z()                 Main entry point; dispatches to the above.
+       _z_precmd()          zsh prompt hook (zsh only).
+
 ENVIRONMENT
-       A function _z() is defined.
+       A function _z() is defined, along with helper functions listed above.
 
        The contents of the variable $_Z_CMD is aliased to _z 2>&1. If not set,
        $_Z_CMD defaults to z.
@@ -128,7 +162,7 @@ ENVIRONMENT
        directory trees to exclude from tracking.  $HOME  is  always  excluded.
        Directories must be full paths without trailing slashes.
 
-       The  environment  variable  $_Z_OWNER  can  be set to your username, to
+       The  environment  variable  $_Z_OWNER  can  be  set to your username, to
        allow usage of z when your sudo environment keeps $HOME set.
 
 FILES
@@ -137,6 +171,18 @@ FILES
        if this path is a directory, and not function correctly.
 
        A man page (z.1) is provided.
+
+TESTING
+       Run the test suite with:
+
+              bash tests.sh
+
+       The  test  suite  covers data file maintenance (add, remove, aging),
+       matching  and  scoring  (frecency, rank, recent), case sensitivity and
+       fallback, common prefix logic, argument parsing, and tab completion.
+
+       Each test runs z.sh in an isolated subshell with a temporary datafile,
+       so tests do not affect your real jump list.
 
 SEE ALSO
        regex(7), pushd, popd, autojump, cdargs
