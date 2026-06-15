@@ -15,6 +15,7 @@
 #         set $_Z_NO_PROMPT_COMMAND if you're handling PROMPT_COMMAND yourself.
 #         set $_Z_EXCLUDE_DIRS to an array of directories to exclude.
 #         set $_Z_OWNER to your username if you want use z while sudo with $HOME kept
+#         set $_Z_KEEP_COMMON to cd to the common ancestor when several dirs match.
 #
 # USE:
 #     * z foo     # cd to most frecent dir matching foo
@@ -144,7 +145,7 @@ _z() {
         [ -f "$datafile" ] || return
 
         local cd
-        cd="$( < <( _z_dirs ) \awk -v t="$(\date +%s)" -v list="$list" -v typ="$typ" -v q="$fnd" -F"|" '
+        cd="$( < <( _z_dirs ) \awk -v t="$(\date +%s)" -v list="$list" -v typ="$typ" -v q="$fnd" -v enable_common="$_Z_KEEP_COMMON" -F"|" '
             function frecent(rank, time) {
               # relate frequency and time
               dx = t - time
@@ -167,16 +168,20 @@ _z() {
                     print best_match
                 }
             }
-            function common(matches) {
-                # find the common root of a list of matches, if it exists
+            function common(matches,   x, short, sep) {
+                # find the common ancestor of a list of matches, if it exists.
+                # only a true path-component ancestor counts, so /a/bc is never
+                # treated as an ancestor of /a/bcd.
                 for( x in matches ) {
                     if( matches[x] && (!short || length(x) < length(short)) ) {
                         short = x
                     }
                 }
-                if( short == "/" ) return
-                for( x in matches ) if( matches[x] && index(x, short) != 1 ) {
-                    return
+                if( short == "/" || short == "" ) return
+                for( x in matches ) if( matches[x] ) {
+                    if( index(x, short) != 1 ) return
+                    sep = substr(x, length(short) + 1, 1)
+                    if( sep != "" && sep != "/" ) return
                 }
                 return short
             }
@@ -204,10 +209,10 @@ _z() {
             END {
                 # prefer case sensitive
                 if( best_match ) {
-                    output(matches, best_match, common(matches))
+                    output(matches, best_match, enable_common ? common(matches) : "")
                     exit
                 } else if( ibest_match ) {
-                    output(imatches, ibest_match, common(imatches))
+                    output(imatches, ibest_match, enable_common ? common(imatches) : "")
                     exit
                 }
                 exit(1)

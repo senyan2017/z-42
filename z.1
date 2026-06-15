@@ -93,6 +93,9 @@ Set \fB$_Z_EXCLUDE_DIRS\fR to an array of directory trees to exclude.
 Set \fB$_Z_OWNER\fR to allow usage when in 'sudo -s' mode.
 .RE
 .RS
+Set \fB$_Z_KEEP_COMMON\fR to cd to the common ancestor of several matches.
+.RE
+.RS
 (These settings should go in .bashrc/.zshrc before the line added above.)
 .RE
 .RS
@@ -118,10 +121,15 @@ ago.
 Frecency is determined at runtime.
 .SS
 Common:
-When multiple directories match all queries, and they all have a common prefix,
-\fBz\fR will cd to the shortest matching directory, without regard to priority.
-This has been in effect, if undocumented, for quite some time, but should
-probably be configurable or reconsidered.
+By default \fBz\fR always takes you to the single highest priority match. This is
+the same directory shown last by \fBz \-l\fR, so the listing, the \fB\-e\fR output
+and the directory you actually land in always agree, even when several matches
+share a common ancestor.
+.P
+Set \fB$_Z_KEEP_COMMON\fR to restore the historical behavior: when every match
+shares a common path\-component ancestor that is itself a match, \fBz\fR will cd
+to that ancestor (the shortest match) without regard to priority. This is off by
+default, and the \fB\-r\fR and \fB\-t\fR ranking modes never use it.
 .SS
 Tab Completion:
 \fBz\fR supports tab completion. After any number of arguments, press TAB to
@@ -159,6 +167,10 @@ Directories must be full paths without trailing slashes.
 .P
 The environment variable \fB$_Z_OWNER\fR can be set to your username, to
 allow usage of \fBz\fR when your sudo environment keeps \fB$HOME\fR set.
+.P
+The environment variable \fB$_Z_KEEP_COMMON\fR can be set to make \fBz\fR cd to
+the common path\-component ancestor of the matches when one exists, instead of the
+single highest priority match. It is unset by default.
 .SH
 FILES
 Data is stored in \fB$HOME/.z\fR. This can be overridden by setting the
