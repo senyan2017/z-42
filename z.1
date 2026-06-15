@@ -118,10 +118,15 @@ ago.
 Frecency is determined at runtime.
 .SS
 Common:
-When multiple directories match all queries, and they all have a common prefix,
-\fBz\fR will cd to the shortest matching directory, without regard to priority.
-This has been in effect, if undocumented, for quite some time, but should
-probably be configurable or reconsidered.
+When multiple directories match all queries and share a common prefix, the
+list mode (\fB\-l\fR) displays that prefix as informational output. However,
+the common prefix does NOT override the best match selection: \fBz\fR always
+jumps to the highest-priority matching directory (based on frecency, rank, or
+recency, depending on the selected mode), regardless of whether a common
+prefix exists.
+.P
+For example, if \fB/foo/bar\fR (high frecency) and \fB/foo/baz\fR (low
+frecency) both match, \fBz foo\fR will cd to \fB/foo/bar\fR, not \fB/foo\fR.
 .SS
 Tab Completion:
 \fBz\fR supports tab completion. After any number of arguments, press TAB to

@@ -163,7 +163,6 @@ _z() {
                         }
                     }
                 } else {
-                    if( common && !typ ) best_match = common
                     print best_match
                 }
             }
