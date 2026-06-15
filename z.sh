@@ -26,6 +26,10 @@
 #     * z -c foo  # restrict matches to subdirs of $PWD
 #     * z -x      # remove the current directory from the datafile
 #     * z -h      # show a brief help message
+#     * z --export [file]    # print the datafile to stdout (or file) for backup
+#     * z --import [file]    # merge a datafile (or stdin) into yours
+#     * z --import -n file   # preview (dry-run) a merge, change nothing
+#     * z --import -p file   # merge, pruning entries whose dir no longer exists
 
 [ -d "${_Z_DATA:-$HOME/.z}" ] && {
     echo "ERROR: z.sh's datafile (${_Z_DATA:-$HOME/.z}) is a directory."
@@ -101,20 +105,259 @@ _z() {
             \env mv -f "$tempfile" "$datafile" || \env rm -f "$tempfile"
         fi
 
-    # tab completion
-    elif [ "$1" = "--complete" -a -s "$datafile" ]; then
-        _z_dirs | \awk -v q="$2" -F"|" '
-            BEGIN {
-                q = substr(q, 3)
-                if( q == tolower(q) ) imatch = 1
-                gsub(/ /, ".*", q)
-            }
+    # tab completion (bash and zsh both feed the whole line in as "$2")
+    elif [ "$1" = "--complete" ]; then
+        local cline="$2"
+        local cword="${cline##* }"
+        case "$cword" in
+            # completing a subcommand or option keyword
+            --i*) echo "--import";;
+            --e*) echo "--export";;
+            --h*) echo "--help";;
+            --d*) echo "--dry-run";;
+            --p*) echo "--prune";;
+            --*) case "$cline" in
+                    *' --import'*|*' --export'*) printf '%s\n' --dry-run --prune;;
+                    *) printf '%s\n' --export --import --help;;
+                 esac;;
+            *) case "$cline" in
+                    # argument position of --import/--export -> complete a path
+                    *' --import '*|*' --export '*)
+                        # zsh: null_glob so an unmatched pattern vanishes instead
+                        # of erroring; harmless no-op command in bash.
+                        [ -n "$ZSH_VERSION" ] && setopt local_options null_glob 2>/dev/null
+                        local f
+                        for f in "$cword"*; do
+                            [ -e "$f" ] && printf '%s\n' "$f"
+                        done;;
+                    # normal directory completion by frecency match
+                    *) [ -s "$datafile" ] && _z_dirs | \awk -v q="$2" -F"|" '
+                        BEGIN {
+                            q = substr(q, 3)
+                            if( q == tolower(q) ) imatch = 1
+                            gsub(/ /, ".*", q)
+                        }
+                        {
+                            if( imatch ) {
+                                if( tolower($1) ~ q ) print $1
+                            } else if( $1 ~ q ) print $1
+                        }
+                    ' 2>/dev/null;;
+                 esac;;
+        esac
+
+    # export the datafile to stdout (or a file) for backup / migration.
+    # data goes to stdout; all messages go to stderr, so that
+    # `z --export > backup` produces a clean datafile.
+    elif [ "$1" = "--export" ]; then
+        shift
+        local out="$1"
+
+        if [ ! -s "$datafile" ]; then
+            echo "z: nothing to export ($datafile is empty or missing)" >&2
+            return 0
+        fi
+        if [ -n "$out" ] && [ "$out" != "-" ] && [ "$out" = "$datafile" ]; then
+            echo "z: refusing to export onto the live datafile ($datafile)" >&2
+            return 1
+        fi
+
+        local exportprog='
             {
-                if( imatch ) {
-                    if( tolower($1) ~ q ) print $1
-                } else if( $1 ~ q ) print $1
+                if( NF==3 && $1!="" && $2 ~ /^[0-9]+([.][0-9]+)?$/ && $3 ~ /^[0-9]+$/ ) {
+                    print; good++
+                } else if( length($0) ) bad++
             }
-        ' 2>/dev/null
+            END {
+                printf "z: exported %d entr%s", (good+0), (good==1?"y":"ies") > "/dev/stderr"
+                if( bad ) printf " (%d malformed line(s) skipped)", bad > "/dev/stderr"
+                printf "\n" > "/dev/stderr"
+            }'
+
+        if [ -n "$out" ] && [ "$out" != "-" ]; then
+            \awk -F"|" "$exportprog" "$datafile" >| "$out" && \
+                echo "z: backup written to $out" >&2
+        else
+            \awk -F"|" "$exportprog" "$datafile"
+        fi
+
+    # import (merge) a datafile exported from another machine.
+    #   -n / --dry-run : preview only, never touch the datafile
+    #   -p / --prune   : drop entries whose directory is absent here
+    # merge rules: duplicate path -> rank summed, newest time kept;
+    # new dirs added; existing untouched dirs kept; malformed lines skipped.
+    elif [ "$1" = "--import" ]; then
+        shift
+        local dry=0 prune=0 src=""
+        while [ "$1" ]; do case "$1" in
+            -n|--dry-run) dry=1;;
+            -p|--prune)   prune=1;;
+            -)            src="-";;
+            --)           shift; [ "$1" ] && src="$1";;
+            -*)           echo "z: unknown import option: $1" >&2; return 1;;
+            *)            src="$1";;
+        esac; [ "$#" -gt 0 ] && shift; done
+
+        local srcdesc="<stdin>"
+        [ -n "$src" ] && [ "$src" != "-" ] && srcdesc="$src"
+
+        # validate + normalize the import source into a temp file, so stdin is
+        # consumed exactly once and the data can be re-read safely.
+        local imptmp="$datafile.imp.$RANDOM"
+        local statf="$datafile.stat.$RANDOM"
+        local validateprog='
+            {
+                if( NF==3 && $1!="" && $2 ~ /^[0-9]+([.][0-9]+)?$/ && $3 ~ /^[0-9]+$/ ) {
+                    print $1 "|" $2 "|" $3; good++
+                } else if( length($0) ) bad++
+            }
+            END { print (good+0) "|" (bad+0) > st }'
+
+        if [ -n "$src" ] && [ "$src" != "-" ]; then
+            if [ ! -f "$src" ] || [ ! -r "$src" ]; then
+                echo "z: cannot read import file: $src" >&2
+                return 1
+            fi
+            \awk -F"|" -v st="$statf" "$validateprog" "$src" 2>/dev/null >| "$imptmp"
+        else
+            \awk -F"|" -v st="$statf" "$validateprog" 2>/dev/null >| "$imptmp"
+        fi
+
+        local impgood impbad
+        IFS="|" read impgood impbad < "$statf"
+        \env rm -f "$statf"
+        impgood=${impgood:-0}; impbad=${impbad:-0}
+
+        if [ "$impgood" -eq 0 ]; then
+            local why="no valid entries found"
+            [ "$impbad" -gt 0 ] && why="$impbad malformed line(s) skipped, none valid"
+            echo "z: nothing to import from $srcdesc ($why); datafile unchanged" >&2
+            \env rm -f "$imptmp"
+            return 0
+        fi
+
+        # number of records currently in the datafile (0 if missing); used to
+        # split the two concatenated inputs in the merge below (robust even if
+        # either side is empty, unlike the FNR==NR idiom).
+        local n1=0 cur_in="/dev/null"
+        if [ -f "$datafile" ]; then
+            n1=$( \awk 'END{ print NR+0 }' "$datafile" 2>/dev/null )
+            cur_in="$datafile"
+        fi
+
+        local score=${_Z_MAX_SCORE:-9000}
+        local mergetmp="$datafile.mrg.$RANDOM"
+        \awk -F"|" -v n1="$n1" -v score="$score" '
+            {
+                if( NR <= n1 ) {
+                    # current datafile (skip any malformed lines defensively)
+                    if( NF==3 && $1!="" && $2 ~ /^[0-9]+([.][0-9]+)?$/ && $3 ~ /^[0-9]+$/ ) {
+                        cr[$1] += $2
+                        if( $3 > ct[$1] ) ct[$1] = $3
+                        hc[$1] = 1
+                    }
+                } else {
+                    # import file (already validated/normalized)
+                    ir[$1] += $2
+                    if( $3 > it[$1] ) it[$1] = $3
+                    hi[$1] = 1
+                }
+            }
+            END {
+                for( p in hc ) all[p] = 1
+                for( p in hi ) all[p] = 1
+                total = 0
+                for( p in all ) {
+                    if( hc[p] && hi[p] ) { r = cr[p] + ir[p]; tt = (ct[p] > it[p] ? ct[p] : it[p]); tg = "M" }
+                    else if( hi[p] )     { r = ir[p];          tt = it[p];                          tg = "N" }
+                    else                 { r = cr[p];          tt = ct[p];                          tg = "U" }
+                    rr[p] = r; tm[p] = tt; tag[p] = tg; total += r
+                }
+                aged = (total > score) ? 1 : 0
+                for( p in all )
+                    printf "%s|%s|%s|%s\n", tag[p], (aged ? 0.99*rr[p] : rr[p]), tm[p], p
+            }
+        ' "$cur_in" "$imptmp" 2>/dev/null >| "$mergetmp"
+        \env rm -f "$imptmp"
+
+        # sort by path for deterministic output / preview
+        \sort -t"|" -k4 "$mergetmp" 2>/dev/null >| "$mergetmp.s" && \
+            \env mv -f "$mergetmp.s" "$mergetmp"
+
+        # walk the merged set: classify, check existence, apply prune, build file
+        local n_new=0 n_merge=0 n_keep=0 n_missing=0 n_pruned=0 n_total=0
+        local finaltmp="$datafile.$RANDOM"
+        : >| "$finaltmp"
+        local preview="" tg rk tmv pth mark
+        while IFS="|" read -r tg rk tmv pth; do
+            [ -z "$pth" ] && continue
+            mark=""
+            if [ ! -d "$pth" ]; then
+                n_missing=$((n_missing+1)); mark=" (missing)"
+                if [ "$prune" -eq 1 ]; then
+                    n_pruned=$((n_pruned+1))
+                    preview="$preview
+  - $pth (missing, pruned)"
+                    continue
+                fi
+            fi
+            printf '%s|%s|%s\n' "$pth" "$rk" "$tmv" >> "$finaltmp"
+            n_total=$((n_total+1))
+            case "$tg" in
+                N) n_new=$((n_new+1));   preview="$preview
+  + $pth$mark";;
+                M) n_merge=$((n_merge+1)); preview="$preview
+  ~ $pth$mark";;
+                U) n_keep=$((n_keep+1)); [ -n "$mark" ] && preview="$preview
+  !$pth$mark";;
+            esac
+        done < "$mergetmp"
+        \env rm -f "$mergetmp"
+        preview="${preview#
+}"
+
+        # write (unless this is a dry run)
+        local backupnote=""
+        if [ "$dry" -eq 0 ]; then
+            if [ -s "$datafile" ]; then
+                \env cp -f "$datafile" "$datafile.bak" 2>/dev/null && \
+                    backupnote="  backup : previous data saved to $datafile.bak"
+            fi
+            [ "$_Z_OWNER" ] && chown "$_Z_OWNER":"$(id -ng "$_Z_OWNER")" "$finaltmp" 2>/dev/null
+            if ! \env mv -f "$finaltmp" "$datafile"; then
+                \env rm -f "$finaltmp"
+                echo "z: import failed: could not write $datafile" >&2
+                return 1
+            fi
+        else
+            \env rm -f "$finaltmp"
+        fi
+
+        # report (to stderr, so it never pollutes piped output)
+        local malf="" verb="written"
+        [ "$impbad" -gt 0 ] && malf=", $impbad malformed skipped"
+        [ "$dry" -eq 1 ] && verb="would be written"
+        {
+            if [ "$dry" -eq 1 ]; then
+                echo "z: import preview of $srcdesc - no changes written (dry run)"
+            else
+                echo "z: imported $srcdesc"
+            fi
+            echo "  source  : $impgood valid entr$( [ "$impgood" -eq 1 ] && echo y || echo ies )$malf"
+            echo "  target  : $datafile ($n1 entr$( [ "$n1" -eq 1 ] && echo y || echo ies ) before)"
+            echo "  + new   : $n_new"
+            echo "  ~ merged: $n_merge (rank summed, newest time kept)"
+            echo "  = kept  : $n_keep"
+            if [ "$prune" -eq 1 ]; then
+                echo "  - pruned: $n_pruned (missing directories dropped)"
+            else
+                echo "  ! missing: $n_missing (directory absent here; pass --prune to drop)"
+            fi
+            echo "  = total : $n_total entr$( [ "$n_total" -eq 1 ] && echo y || echo ies ) $verb"
+            [ -n "$backupnote" ] && echo "$backupnote"
+            [ -n "$preview" ] && { echo "  ---"; echo "$preview"; }
+        } >&2
+        return 0
 
     else
         # list/go
@@ -124,7 +367,13 @@ _z() {
             -*) opt=${1:1}; while [ "$opt" ]; do case ${opt:0:1} in
                     c) fnd="^$PWD $fnd";;
                     e) echo=1;;
-                    h) echo "${_Z_CMD:-z} [-cehlrtx] args" >&2; return;;
+                    h) {
+                        echo "${_Z_CMD:-z} [-cehlrtx] args     jump to a frecent dir matching args"
+                        echo "${_Z_CMD:-z} --export [file]      print the datafile for backup (no file = stdout)"
+                        echo "${_Z_CMD:-z} --import [opts] [file]  merge a datafile (or stdin) into yours"
+                        echo "      -n, --dry-run   preview the merge, write nothing"
+                        echo "      -p, --prune     drop entries whose directory no longer exists"
+                       } >&2; return;;
                     l) list=1;;
                     r) typ="rank";;
                     t) typ="recent";;

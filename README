@@ -1,12 +1,12 @@
 Z(1)                             User Commands                            Z(1)
 
-
-
 NAME
        z - jump around
 
 SYNOPSIS
        z [-chlrtx] [regex1 regex2 ... regexn]
+       z --export [file]
+       z --import [--dry-run] [--prune] [file]
 
 AVAILABILITY
        bash, zsh
@@ -14,8 +14,8 @@ AVAILABILITY
 DESCRIPTION
        Tracks your most used directories, based on 'frecency'.
 
-       After  a  short  learning  phase, z will take you to the most 'frecent'
-       directory that matches ALL of the regexes given on the command line, in
+       After a short learning phase, z will take you to the most 'frecent' di-
+       rectory  that  matches ALL of the regexes given on the command line, in
        order.
 
        For example, z foo bar would match /foo/bar but not /bar/foo.
@@ -35,6 +35,50 @@ OPTIONS
 
        -x     remove the current directory from the datafile
 
+BACKUP AND MIGRATION
+       z can dump its datafile for backup and merge a datafile  saved  on  an-
+       other  machine,  so a learned jump-list survives reinstalls and follows
+       your dotfiles between hosts instead of being relearned from scratch.
+
+   Exporting:
+       z --export [file] writes the datafile to standard output,  or  to  file
+       when  one  is  given.  Only well-formed entries are emitted and a short
+       summary is printed to standard error, so z --export > backup.z produces
+       a clean backup. This is read-only; it never changes the datafile.
+
+   Importing:
+       z --import [file] merges the entries in file (or standard  input,  when
+       file is omitted or -) into the datafile. The import is a merge, never a
+       blind overwrite:
+
+              o A  directory  found  in both the import and the datafile keeps
+                the sum of its two ranks and the newer of its two timestamps.
+
+              o A directory found only in the import is added.
+
+              o A directory found only in the datafile is left untouched.
+
+              o Duplicate entries within the import file are combined the same
+                way.
+
+              o Malformed lines are skipped and counted, never written.
+
+              o If the combined ranks exceed $_Z_MAX_SCORE, the usual aging is
+                applied.
+
+       Before the datafile is replaced, its previous contents  are  copied  to
+       $_Z_DATA.bak, so an import can always be undone.
+
+       -n, --dry-run
+              Preview the merge and report what would change, writing nothing.
+              Use this to inspect a migration before committing to it.
+
+       -p, --prune
+              Drop  merged  entries whose directory does not exist on the cur-
+              rent machine.  Without this flag such entries are kept (a direc-
+              tory may simply not be checked out yet) and  merely  flagged  in
+              the report.
+
 EXAMPLES
        z foo         cd to most frecent dir matching foo
 
@@ -45,6 +89,21 @@ EXAMPLES
        z -t foo      cd to most recently accessed dir matching foo
 
        z -l foo      list all dirs matching foo (by frecency)
+
+       z --export > ~/z.bak
+                     back up the jump-list to a file
+
+       z --import ~/z.bak
+                     merge a saved jump-list into the current one
+
+       z --import -n ~/z.bak
+                     preview that merge without changing anything
+
+       z --import -p ~/z.bak
+                     merge, dropping dirs that no longer exist here
+
+       ssh host 'z --export' | z --import
+                     copy a jump-list straight from another machine
 
 NOTES
    Installation:
@@ -64,7 +123,7 @@ NOTES
               Set $_Z_NO_RESOLVE_SYMLINKS to prevent symlink resolution.
               Set $_Z_NO_PROMPT_COMMAND to handle PROMPT_COMMAND/precmd  your-
               self.
-              Set $_Z_EXCLUDE_DIRS to an array of directory trees to  exclude.
+              Set $_Z_EXCLUDE_DIRS to an array of directory trees to exclude.
               Set $_Z_OWNER to allow usage when in 'sudo -s' mode.
               (These  settings  should  go  in  .bashrc/.zshrc before the line
               added above.)
@@ -73,9 +132,9 @@ NOTES
 
    Aging:
        The rank of directories maintained by z undergoes aging based on a sim-
-       ple formula. The rank of each entry is incremented  every  time  it  is
-       accessed.  When the sum of ranks is over 9000, all ranks are multiplied
-       by 0.99. Entries with a rank lower than 1 are forgotten.
+       ple formula. The rank of each entry is incremented every time it is ac-
+       cessed. When the sum of ranks is over 9000, all ranks are multiplied by
+       0.99. Entries with a rank lower than 1 are forgotten.
 
    Frecency:
        Frecency is a portmanteau of 'recent' and 'frequency'. It is a weighted
@@ -97,11 +156,11 @@ NOTES
    Tab Completion:
        z  supports tab completion. After any number of arguments, press TAB to
        complete on directories that match each argument. Due to limitations of
-       the  completion  implementations,  only  the last argument will be com-
+       the completion implementations, only the last  argument  will  be  com-
        pleted in the shell.
 
-       Internally, z decides you've requested a completion if the  last  argu-
-       ment  passed  is  an  absolute  path to an existing directory. This may
+       Internally,  z  decides you've requested a completion if the last argu-
+       ment passed is an absolute path to  an  existing  directory.  This  may
        cause unexpected behavior if the last argument to z begins with /.
 
 ENVIRONMENT
@@ -114,8 +173,8 @@ ENVIRONMENT
        location. If it is not defined, the location defaults to $HOME/.z.
 
        The environment variable $_Z_NO_RESOLVE_SYMLINKS can be set to  prevent
-       resolving  of  symlinks.  If  it  is  not  set,  symbolic links will be
-       resolved when added to the datafile.
+       resolving  of  symlinks.  If  it is not set, symbolic links will be re-
+       solved when added to the datafile.
 
        In bash, z appends a command to the PROMPT_COMMAND environment variable
        to maintain its database. In zsh, z appends a function _z_precmd to the
@@ -124,17 +183,20 @@ ENVIRONMENT
        The environment variable $_Z_NO_PROMPT_COMMAND can be set if  you  want
        to handle PROMPT_COMMAND or precmd yourself.
 
-       The  environment  variable  $_Z_EXCLUDE_DIRS  can be set to an array of
-       directory trees to exclude from tracking.  $HOME  is  always  excluded.
-       Directories must be full paths without trailing slashes.
+       The environment variable $_Z_EXCLUDE_DIRS can be set to an array of di-
+       rectory  trees to exclude from tracking. $HOME is always excluded.  Di-
+       rectories must be full paths without trailing slashes.
 
-       The  environment  variable  $_Z_OWNER  can  be set to your username, to
-       allow usage of z when your sudo environment keeps $HOME set.
+       The environment variable $_Z_OWNER can be set to your username, to  al-
+       low usage of z when your sudo environment keeps $HOME set.
 
 FILES
-       Data is stored in $HOME/.z. This  can  be  overridden  by  setting  the
-       $_Z_DATA  environment variable. When initialized, z will raise an error
+       Data  is  stored  in  $HOME/.z.  This  can be overridden by setting the
+       $_Z_DATA environment variable. When initialized, z will raise an  error
        if this path is a directory, and not function correctly.
+
+       z  --import  copies  the  previous  datafile  to  $_Z_DATA.bak (default
+       $HOME/.z.bak) before replacing it.
 
        A man page (z.1) is provided.
 
@@ -142,7 +204,5 @@ SEE ALSO
        regex(7), pushd, popd, autojump, cdargs
 
        Please file bugs at https://github.com/rupa/z/
-
-
 
 z                                January 2013                             Z(1)
