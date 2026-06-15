@@ -4,7 +4,7 @@ NAME
 z \- jump around
 .SH
 SYNOPSIS
-z [\-chlrtx] [regex1 regex2 ... regexn]
+z [\-cehlrtx] [regex1 regex2 ... regexn]
 .SH
 AVAILABILITY
 bash, zsh
@@ -134,7 +134,10 @@ passed is an absolute path to an existing directory. This may cause unexpected
 behavior if the last argument to \fBz\fR begins with \fB/\fR.
 .SH
 ENVIRONMENT
-A function \fB_z()\fR is defined.
+A function \fB_z()\fR is defined. It is a thin dispatcher over a set of
+internal helper functions, all prefixed \fB_z_\fR, that read and maintain the
+datafile, match candidates, and complete. These helpers are implementation
+details rather than a public interface.
 .P
 The contents of the variable \fB$_Z_CMD\fR is aliased to \fB_z 2>&1\fR. If not
 set, \fB$_Z_CMD\fR defaults to \fBz\fR.

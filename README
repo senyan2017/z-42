@@ -6,7 +6,7 @@ NAME
        z - jump around
 
 SYNOPSIS
-       z [-chlrtx] [regex1 regex2 ... regexn]
+       z [-cehlrtx] [regex1 regex2 ... regexn]
 
 AVAILABILITY
        bash, zsh
@@ -105,7 +105,10 @@ NOTES
        cause unexpected behavior if the last argument to z begins with /.
 
 ENVIRONMENT
-       A function _z() is defined.
+       A function _z() is defined. It is a thin dispatcher over a set of
+       internal  helper  functions, all prefixed _z_, that read and main-
+       tain the datafile, match candidates, and complete.  These  helpers
+       are implementation details rather than a public interface.
 
        The contents of the variable $_Z_CMD is aliased to _z 2>&1. If not set,
        $_Z_CMD defaults to z.
